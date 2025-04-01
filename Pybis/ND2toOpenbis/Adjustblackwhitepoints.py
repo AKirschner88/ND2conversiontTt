@@ -8,44 +8,71 @@ logging.basicConfig(level=logging.INFO)
 
 def adjust_black_white_cv2(image_dir):
     """
-    Interactive black-and-white point adjustment for all PNG images in a directory.
+    Interactive adjustment of black and white points for each PNG image (each channel) in a directory.
+    For each image, a window is opened with trackbars to adjust Min and Max values. The window title includes the image name.
+    When you close the window, the adjustments are saved.
+    
+    Returns:
+        dict: Dictionary mapping each image name (or channel) to its black/white adjustment values.
     """
+    # List all PNG files in the directory
     image_paths = sorted([os.path.join(image_dir, f) for f in os.listdir(image_dir) if f.endswith(".png")])
     if not image_paths:
         raise ValueError(f"No PNG files found in directory: {image_dir}")
     
-    images = [cv2.imread(path, cv2.IMREAD_UNCHANGED) for path in image_paths]
     black_white_points = {}
-
-    for i, img in enumerate(images):
-        if img is None:
-            raise ValueError(f"Could not load image: {image_paths[i]}")
-        if img.dtype != np.uint16:
-            raise ValueError(f"Image {image_paths[i]} must be 16-bit grayscale.")
     
-    def create_update_callback(image_index, image_name):
-        def update_display(val):
-            vmin = cv2.getTrackbarPos(f"Min_{image_name}", image_name)
-            vmax = cv2.getTrackbarPos(f"Max_{image_name}", image_name)
-            if vmin >= vmax:
-                return  # Ignore invalid ranges
-            black_white_points[image_name] = {"Min": vmin, "Max": vmax}
-            display_image = np.clip(images[image_index], vmin, vmax)
-            display_image = ((display_image - vmin) / max(1, vmax - vmin) * 65535).astype(np.uint16)
-            cv2.imshow(image_name, (display_image / 256).astype(np.uint8))
-        return update_display
-    
+    # Process each image sequentially
     for idx, path in enumerate(image_paths):
         image_name = os.path.basename(path)
-        cv2.namedWindow(image_name, cv2.WINDOW_NORMAL)
-        callback = create_update_callback(idx, image_name)
-        cv2.createTrackbar(f"Min_{image_name}", image_name, 0, 65535, callback)
-        cv2.createTrackbar(f"Max_{image_name}", image_name, 65535, 65535, callback)
-        cv2.imshow(image_name, (images[idx] / 256).astype(np.uint8))
-    
-    logging.info("Adjust black and white points for each channel, then press any key to save and exit.")
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
+        logging.info(f"Adjust black and white points for {image_name}.")
+        
+        # Load image
+        img = cv2.imread(path, cv2.IMREAD_UNCHANGED)
+        if img is None:
+            logging.warning(f"Could not load image: {image_name}. Skipping.")
+            continue
+        if img.dtype != np.uint16:
+            raise ValueError(f"Image {image_name} must be 16-bit grayscale.")
+        
+        # Create a window for this image with a unique name
+        window_name = f"Adjust Black/White - {image_name}"
+        cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+        
+        # Define a dummy callback for the trackbars
+        def nothing(x):
+            pass
+        
+        # Create trackbars for Min and Max values
+        cv2.createTrackbar("Min", window_name, 0, 65535, nothing)
+        cv2.createTrackbar("Max", window_name, 65535, 65535, nothing)
+        
+        # Convert the 16-bit image to an 8-bit image for display
+        display_img = (img / 256).astype(np.uint8)
+        cv2.imshow(window_name, display_img)
+        
+        logging.info("Adjust the black and white points for this channel, then close the window to save adjustments.")
+        
+        # Continuously update the display while the window is open.
+        while cv2.getWindowProperty(window_name, cv2.WND_PROP_VISIBLE) > 0:
+            min_val = cv2.getTrackbarPos("Min", window_name)
+            max_val = cv2.getTrackbarPos("Max", window_name)
+            if min_val >= max_val:
+                # If the range is invalid, show the original display image.
+                updated_img = display_img.copy()
+            else:
+                # Adjust the image: clip and scale to 0-255 for visualization.
+                adjusted = np.clip(img, min_val, max_val)
+                updated_img = ((adjusted - min_val) / max(1, max_val - min_val) * 255).astype(np.uint8)
+            cv2.imshow(window_name, updated_img)
+            cv2.waitKey(50)  # Update every 50ms
+        
+        # Once the window is closed, retrieve the final trackbar values.
+        final_min = cv2.getTrackbarPos("Min", window_name)
+        final_max = cv2.getTrackbarPos("Max", window_name)
+        black_white_points[image_name] = {"Min": final_min, "Max": final_max}
+        cv2.destroyWindow(window_name)
+        logging.info(f"Saved adjustments for {image_name}: Min={final_min}, Max={final_max}")
     
     return black_white_points
 

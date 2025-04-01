@@ -1,5 +1,6 @@
 import os
 import numpy as np
+import math
 from tifffile import imwrite
 from skimage.io import imread
 from PIL import Image, ImageDraw, ImageFont
@@ -7,117 +8,84 @@ import logging
 
 logging.basicConfig(level=logging.INFO)
 
-logging.basicConfig(level=logging.INFO)
-
-def create_composite_images_for_all_channels(output_dir, num_channels, channel_names=None, dimensions=None):
+def create_composite_images_for_all_channels(output_dir, num_channels, channel_names=None, dimensions=None, max_positions_per_row=10):
     """
-    Creates labeled composite images for all channels, arranging rows as time points and columns as positions.
+    Creates labeled composite images for all channels.
     
-    For 3D samples, it uses the middle Z-plane (z_index computed from dimensions).
-    For 2D samples (dimensions['Z'] == 1 or dimensions is None), it uses the only available plane.
+    Instead of placing all positions in one row, this function arranges positions in a grid.
+    For each channel, it uses the first image (or time point) from each position to form the grid.
     
     Args:
-        output_dir (str): The directory where position directories exist.
-        num_channels (int): The number of channels.
+        output_dir (str): Directory where the extracted images are stored.
+        num_channels (int): Number of channels.
         channel_names (list, optional): Custom channel names.
-        dimensions (dict, optional): ND2 dimensions; expected to contain key 'Z'. If not provided, assumed 2D.
+        dimensions (dict, optional): ND2 dimensions.
+        max_positions_per_row (int): Maximum number of positions per row.
     """
     if not channel_names:
         channel_names = [f"Channel {i+1}" for i in range(num_channels)]
     
-    # Determine if sample is 2D or 3D based on dimensions
-    if dimensions is not None:
-        z_dim = dimensions.get("Z", 1)
-    else:
-        z_dim = 1  # Assume 2D if dimensions not provided
-
-    # Compute z_index: if 2D (z_dim == 1) then use 0, else choose middle plane.
-    if z_dim == 1:
-        z_index = 0
-    else:
-        z_index = z_dim // 2
-
-    logging.info(f"Creating composite images using z_index = {z_index} (Z-dim = {z_dim})")
-    
-    # List of position directories (assumes each position has its own subfolder in output_dir)
-    position_dirs = sorted(
-        [os.path.join(output_dir, d) for d in os.listdir(output_dir)
-         if os.path.isdir(os.path.join(output_dir, d))]
-    )
+    # Get the list of position directories in the output folder.
+    position_dirs = sorted([os.path.join(output_dir, d) for d in os.listdir(output_dir)
+                              if os.path.isdir(os.path.join(output_dir, d))])
     if not position_dirs:
         logging.error("No position directories found in the specified output_dir.")
         return
 
-    logging.info(f"Found {len(position_dirs)} positions.")
+    logging.info(f"Found {len(position_dirs)} position directories.")
     
-    # For each channel, gather images from each position.
+    # For each channel, build a composite from the first image (e.g. time point 0) in each position.
     for channel_idx, channel_name in enumerate(channel_names):
         logging.info(f"Creating composite image for {channel_name}")
-        all_time_images = []
-        time_labels = None
-
-        # Process each position directory
-        for position_dir in position_dirs:
-            logging.info(f"Processing position directory: {position_dir}")
-            tiff_files = sorted([
-                os.path.join(position_dir, f) 
-                for f in os.listdir(position_dir) if f"channel_{channel_idx}" in f
-            ])
-            logging.info(f"Found {len(tiff_files)} TIFF files for channel {channel_idx} in {position_dir}")
-            if not tiff_files:
-                logging.warning(f"No TIFF files for channel {channel_idx} found in {position_dir}. Skipping.")
+        position_images = []  # This will hold one image per position for the given channel.
+        for pos_dir in position_dirs:
+            # Assume filenames contain "channel_{channel_idx}" and a time indicator.
+            # We'll filter for files that match and pick the first one.
+            files = sorted([os.path.join(pos_dir, f) for f in os.listdir(pos_dir)
+                            if f"channel_{channel_idx}" in f])
+            logging.info(f"  {pos_dir}: found {len(files)} files for channel {channel_idx}")
+            if not files:
+                logging.warning(f"  No files for channel {channel_idx} in {pos_dir}")
                 continue
-            # ... process files ...
-
-
-            # For each file, load image; if sample is 3D, extract the plane at z_index.
-            position_images = []
-            for f in tiff_files:
-                img = imread(f)
-                if img.ndim == 3 and z_dim > 1:
-                    # For 3D, select the specified z-plane.
+            # Use the first file as the representative image.
+            try:
+                img = imread(files[0])
+                # If the image is 3D and dimensions indicate 3D, extract the middle plane
+                if img.ndim == 3 and dimensions and dimensions.get("Z", 1) > 1:
+                    z_index = dimensions["Z"] // 2
                     img = img[z_index]
                 position_images.append(img)
-            # Assume time_labels can be extracted from filenames of the first valid position.
-            if time_labels is None and position_images:
-                time_labels = [os.path.basename(f).split("_")[2] for f in tiff_files]
-            all_time_images.append(position_images)
+            except Exception as e:
+                logging.error(f"  Failed to read image {files[0]}: {e}")
         
-        if not all_time_images:
-            logging.warning(f"No valid images found for {channel_name}. Skipping this channel.")
+        if not position_images:
+            logging.warning(f"No valid images found for channel {channel_idx}. Skipping composite creation for this channel.")
             continue
-
-        # Use the minimum number of time points across all positions.
-        min_rows = min(len(images) for images in all_time_images)
-        if time_labels is None:
-            time_labels = [f"Time {i+1}" for i in range(min_rows)]
-        elif len(time_labels) > min_rows:
-            time_labels = time_labels[:min_rows]
-
-        n_rows = min_rows
-        n_cols = len(all_time_images)
-        # Use the shape of the first image in the first position as a reference.
-        sample_image = all_time_images[0][0]
-        composite_height = n_rows * sample_image.shape[0]
-        composite_width = n_cols * sample_image.shape[1]
+        
+        # Arrange position_images in a grid.
+        n_positions = len(position_images)
+        n_cols = min(max_positions_per_row, n_positions)
+        n_rows = math.ceil(n_positions / max_positions_per_row)
+        logging.info(f"Arranging {n_positions} positions in {n_rows} rows and {n_cols} columns.")
+        
+        # Use the shape of the first image as reference.
+        sample_image = position_images[0]
+        cell_height, cell_width = sample_image.shape[:2]
+        composite_height = n_rows * cell_height
+        composite_width = n_cols * cell_width
+        # Create a blank composite image (assuming grayscale 16-bit images).
         composite_image = np.zeros((composite_height, composite_width), dtype=np.uint16)
-
-        # Fill the composite image grid.
-        for row_idx in range(n_rows):
-            for col_idx, position_images in enumerate(all_time_images):
-                if row_idx >= len(position_images):
-                    logging.warning(f"Position at index {col_idx} does not have enough time points.")
-                    continue
-                img = position_images[row_idx]
-                row_start = row_idx * img.shape[0]
-                row_end = row_start + img.shape[0]
-                col_start = col_idx * img.shape[1]
-                col_end = col_start + img.shape[1]
-                composite_image[row_start:row_end, col_start:col_end] = img
-
-        # Save the composite image as a 16-bit PNG.
+        
+        # Place each image into the composite grid.
+        for idx, img in enumerate(position_images):
+            row_idx = idx // max_positions_per_row
+            col_idx = idx % max_positions_per_row
+            y0 = row_idx * cell_height
+            x0 = col_idx * cell_width
+            # Ensure image dimensions match; if not, you may need to resize.
+            composite_image[y0:y0+cell_height, x0:x0+cell_width] = img
         output_png_path = os.path.join(output_dir, f"{channel_name}.png")
-        imwrite(output_png_path, composite_image.astype(np.uint16))
+        imwrite(output_png_path, composite_image)
         logging.info(f"Saved composite image for {channel_name} at {output_png_path}")
 
 def draw_labels_on_image(image, time_labels, position_labels, label_height, label_width):

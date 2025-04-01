@@ -69,32 +69,40 @@ class OpenBISExplorerDialog(QDialog):
     def populate_tree(self):
         try:
             all_spaces = self.openbis_instance.get_spaces()
-            login_name = (self.openbis_instance.username.upper())
+            login_name = (self.openbis_instance.username if hasattr(self.openbis_instance, "username") else "").upper()
             filtered_spaces = [space for space in all_spaces if space.code.upper() == login_name]
-            logging.info(f"Found {len(filtered_spaces)} spaces matching '{login_name}'.")
+
+            logging.info(f"Login name: {login_name}")
+            logging.info(f"Filtered spaces: {[s.code for s in filtered_spaces]}")
+
             if not filtered_spaces:
                 logging.warning("No matching spaces found in openBIS.")
                 return
+            
+            # IMPORTANT: Iterate over filtered_spaces, NOT all_spaces
             for space in filtered_spaces:
                 space_item = QTreeWidgetItem([space.code])
                 space_item.setData(0, Qt.UserRole, space)
                 self.tree.addTopLevelItem(space_item)
+                
                 projects = space.get_projects()
                 logging.info(f"  Found {len(projects)} projects in space {space.code}.")
                 for proj in projects:
                     proj_item = QTreeWidgetItem([proj.code])
                     proj_item.setData(0, Qt.UserRole, proj)
                     space_item.addChild(proj_item)
+
                     experiments = proj.get_experiments()
                     logging.info(f"    Found {len(experiments)} experiments in project {proj.code}.")
                     for exp in experiments:
                         exp_item = QTreeWidgetItem([exp.code])
                         exp_item.setData(0, Qt.UserRole, exp)
                         proj_item.addChild(exp_item)
+
             self.tree.expandAll()
         except Exception as e:
             logging.error(f"Failed to populate openBIS hierarchy: {e}")
-    
+
     def accept_selection(self):
         current_item = self.tree.currentItem()
         if not current_item:
@@ -144,9 +152,10 @@ class OpenBISLoginDialog(QDialog):
                 raise ValueError("Both username and password must be provided.")
             self.openbis_instance = Openbis(self.openbis_host)
             self.openbis_instance.login(username, password)
+            # Save the username in the instance for later use
+            self.openbis_instance.username = username
             QMessageBox.information(self, "Success", "Logged into OpenBIS successfully!")
             self.accept()
-            return username
         except Exception as e:
             QMessageBox.critical(self, "Login Failed", f"Error: {e}")
 
@@ -347,7 +356,12 @@ class ND2PipelineApp(QMainWindow):
     def populate_projects(self):
         try:
             all_projects = self.openbis_instance.get_projects()
-            filtered_projects = [p for p in all_projects if p.space.code.upper() == "Akirschner".upper()]
+            # Retrieve the username from the openBIS instance and convert it to uppercase.
+            login_name = (self.openbis_instance.username if hasattr(self.openbis_instance, "username") else "").upper()
+            logging.info(f"Using login name: {login_name}")
+            # Filter projects where the space code matches the login name.
+            filtered_projects = [p for p in all_projects if p.space.code.upper() == login_name]
+            logging.info(f"Found {len(filtered_projects)} projects in the {login_name} space.")
             for p in filtered_projects:
                 proj_identifier = f"{p.space.code}/{p.code}"
                 self.project_combo.addItem(proj_identifier)

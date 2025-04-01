@@ -1,7 +1,7 @@
 import os
 import json
 import numpy as np
-from tifffile import imsave
+from tifffile import imwrite
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from nd2 import ND2File
@@ -42,7 +42,7 @@ def process_single_frame(nd2_file_path, position_idx, t_idx, z_idx, channel, vmi
             if frame.ndim == 3 and frame.shape[0] > 1:
                 frame = frame[channel]
             adjusted_image = adjust_image_to_black_white(frame, vmin, vmax)
-            imsave(save_path, adjusted_image)
+            imwrite(save_path, adjusted_image)
         return f"Processed and saved: {save_path}"
     except Exception as e:
         return f"Error processing frame P={position_idx}, T={t_idx}, Z={z_idx}, C={channel}: {e}"
