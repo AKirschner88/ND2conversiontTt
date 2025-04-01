@@ -3,7 +3,7 @@ import json
 import numpy as np
 from tifffile import imwrite
 from datetime import datetime
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from nd2 import ND2File
 import logging
 
@@ -77,8 +77,11 @@ def process_nd2_images_multithreaded(nd2_file_path, output_dir, black_white_poin
         
         total_tasks = len(tasks)
         logging.info(f"Total tasks to process: {total_tasks}")
-        
-        with ThreadPoolExecutor(max_workers=os.cpu_count()) as executor:
+        num_workers = os.cpu_count()
+        logging.info(f"Using {num_workers} parallel workers for processing.")
+
+
+        with ProcessPoolExecutor(max_workers=os.cpu_count()) as executor:
             futures = [
                 executor.submit(process_single_frame, nd2_file_path, *task) 
                 for task in tasks
