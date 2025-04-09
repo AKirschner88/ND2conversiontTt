@@ -7,7 +7,7 @@ from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QLabel, QLineEdit, QVBoxLayout,
     QPushButton, QProgressBar, QWidget, QGridLayout, QCheckBox, 
     QMessageBox, QDialog, QPlainTextEdit, QComboBox, QTreeWidget, QTreeWidgetItem,
-    QHBoxLayout
+    QHBoxLayout,QSpinBox
 )
 from PyQt5.QtCore import QThread, QObject, pyqtSignal, Qt
 
@@ -58,7 +58,7 @@ class OpenBISExplorerDialog(QDialog):
         button_layout = QHBoxLayout()
         self.select_button = QPushButton("Select")
         self.select_button.clicked.connect(self.accept_selection)
-        self.cancel_button = QPushButton("Cancel")
+        self.cancel_buttonofcou = QPushButton("Cancel")
         self.cancel_button.clicked.connect(self.reject)
         button_layout.addWidget(self.select_button)
         button_layout.addWidget(self.cancel_button)
@@ -169,7 +169,7 @@ class WorkerThread(QThread):
     final_update_done = pyqtSignal(bool)
 
     def __init__(self, file_path, dimensions, channels, openbis_instance, output_dir,
-                 selected_project, date_str, user_str, setup_str, experiment_identifier):
+                 selected_project, date_str, user_str, setup_str, experiment_identifier, compression_level=0):
         super().__init__()
         self.file_path = file_path
         self.dimensions = dimensions
@@ -181,6 +181,7 @@ class WorkerThread(QThread):
         self.user_str = user_str
         self.setup_str = setup_str
         self.experiment_identifier = experiment_identifier
+        self.compression_level = compression_level
         self.stopped = False
 
     def stop(self):
@@ -223,7 +224,8 @@ class WorkerThread(QThread):
                 self.output_dir,
                 os.path.join(self.output_dir, "black_white_points.json"),
                 datetime.now().strftime("%y%m%d"),
-                "AK",  # Adjust as needed
+                "AK",  # Adjust as needed, or replace with your username if appropriate.
+                compression_percent=self.compression_level,  # Note: here compression_percent is used, so adjust your conversion code accordingly.
                 progress_callback=my_progress_callback
             )
             self.completion.emit(4)
@@ -332,7 +334,7 @@ class ND2PipelineApp(QMainWindow):
         self.progress_bar.setValue(0)
         self.layout.addWidget(self.progress_label)
         self.layout.addWidget(self.progress_bar)
-        
+
         # --- Section 6: Logging Output ---
         self.log_widget = QPlainTextEdit()
         self.log_widget.setReadOnly(True)
@@ -341,7 +343,27 @@ class ND2PipelineApp(QMainWindow):
         
         self.setCentralWidget(self.central_widget)
         self.setup_logging()
-    
+        
+        # --- section 7: --- PNG compression  
+        # Create a horizontal layout for the PNG compression control.
+        compression_layout = QHBoxLayout()
+        compression_label = QLabel("PNG Compression (0-9):")
+        compression_layout.addWidget(compression_label)
+
+        # Create a QSpinBox that accepts values 0 to 9.
+        self.compression_spinbox = QSpinBox()
+        self.compression_spinbox.setRange(0, 9)
+        self.compression_spinbox.setValue(0)  # Default 0 means no compression.
+        compression_layout.addWidget(self.compression_spinbox)
+
+        # Create a "?" QLabel with a tooltip.
+        question_label = QLabel("?")
+        question_label.setToolTip("PNG Compression Level:\n0 = No compression (largest file)\n9 = Maximum compression (smallest file)")
+        compression_layout.addWidget(question_label)
+
+        # Add this compression layout to your main layout.
+        self.layout.addLayout(compression_layout)
+
     def setup_logging(self):
         qt_handler = QtHandler()
         qt_handler.setLevel(logging.INFO)
@@ -418,12 +440,19 @@ class ND2PipelineApp(QMainWindow):
         user_str = self.user_edit.text()
         setup_str = self.setup_edit.text()
         selected_project = self.project_combo.currentText()
+
         if self.selected_experiment_identifier is None:
             file_base = os.path.splitext(os.path.basename(self.file_path))[0]
             experiment_identifier = f"{selected_project}/{file_base}"
         else:
             experiment_identifier = self.selected_experiment_identifier
+
         logging.info(f"Using experiment identifier: {experiment_identifier}")
+        
+        # Get compression level from the spin box (0 = no compression, 9 = maximum)
+        compression_level = self.compression_spinbox.value()
+        logging.info(f"Using PNG compression level: {compression_level}")
+
         for checkbox in self.step_checkboxes:
             checkbox.setChecked(False)
         self.worker = WorkerThread(
@@ -436,7 +465,8 @@ class ND2PipelineApp(QMainWindow):
             date_str,
             user_str,
             setup_str,
-            experiment_identifier
+            experiment_identifier,
+            compression_level  # Pass the compression level (0-9)
         )
         self.worker.progress.connect(self.update_progress)
         self.worker.completion.connect(self.mark_step_completed)
