@@ -17,5 +17,5 @@ This repository uses conda for managing dependencies. Follow these steps to crea
 1. **Clone the repository:**
 
    ```bash
-   git clone https://github.com/YourUsername/ND2conversiontTt.git
+   git clone https://github.com/Akirschner88/ND2conversiontTt.git
    cd ND2conversiontTt
